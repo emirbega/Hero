@@ -47,15 +47,16 @@ public enum HeroDefaultAnimationType {
   case fade
   case zoom
   case zoomOut
-
+  case fadeInSlide(direction: Direction)
+  
   indirect case selectBy(presenting: HeroDefaultAnimationType, dismissing: HeroDefaultAnimationType)
-
+  
   public static func autoReverse(presenting: HeroDefaultAnimationType) -> HeroDefaultAnimationType {
     return .selectBy(presenting: presenting, dismissing: presenting.reversed())
   }
-
+  
   case none
-
+  
   func reversed() -> HeroDefaultAnimationType {
     switch self {
     case .push(direction: .up):
@@ -126,12 +127,20 @@ public enum HeroDefaultAnimationType {
       return .zoomOut
     case .zoomOut:
       return .zoom
-
+    case .fadeInSlide(direction: .up):
+      return .fadeInSlide(direction: .down)
+    case .fadeInSlide(direction: .down):
+      return .fadeInSlide(direction: .up)
+    case .fadeInSlide(direction: .left):
+      return .fadeInSlide(direction: .right)
+    case .fadeInSlide(direction: .right):
+      return .fadeInSlide(direction: .left)
+      
     default:
       return self
     }
   }
-
+  
   public var label: String? {
     let mirror = Mirror(reflecting: self)
     if let associated = mirror.children.first {
@@ -150,7 +159,7 @@ extension HeroDefaultAnimationType: HeroStringConvertible {
   public static func from(node: ExprNode) -> HeroDefaultAnimationType? {
     let name: String = node.name
     let parameters: [ExprNode] = (node as? CallNode)?.arguments ?? []
-
+    
     switch name {
     case "auto":
       return .auto
@@ -189,6 +198,10 @@ extension HeroDefaultAnimationType: HeroStringConvertible {
     case "fade": return .fade
     case "zoom": return .zoom
     case "zoomOut": return .zoomOut
+    case "fadeInSlide":
+      if let node = parameters.get(0), let direction = Direction.from(node: node) {
+        return .fadeInSlide(direction: direction)
+      }
     case "selectBy":
       if let presentingNode = parameters.get(0),
         let presenting = HeroDefaultAnimationType.from(node: presentingNode),
@@ -204,13 +217,13 @@ extension HeroDefaultAnimationType: HeroStringConvertible {
 }
 
 class DefaultAnimationPreprocessor: BasePreprocessor {
-
+  
   weak var hero: Hero?
-
+  
   init(hero: Hero) {
     self.hero = hero
   }
-
+  
   func shift(direction: HeroDefaultAnimationType.Direction, appearing: Bool, size: CGSize? = nil, transpose: Bool = false) -> CGPoint {
     let size = size ?? context.container.bounds.size
     let rtn: CGPoint
@@ -225,7 +238,7 @@ class DefaultAnimationPreprocessor: BasePreprocessor {
     }
     return rtn
   }
-
+  
   override func process(fromViews: [UIView], toViews: [UIView]) {
     guard let hero = hero else { return }
     var defaultAnimation = hero.defaultAnimation
@@ -239,7 +252,7 @@ class DefaultAnimationPreprocessor: BasePreprocessor {
     let toView = hero.toView
     let fromView = hero.fromView
     let animators = hero.animators
-
+    
     if case .auto = defaultAnimation {
       if inNavigationController, let navAnim = toViewController?.navigationController?.heroNavigationAnimationType {
         defaultAnimation = navAnim
@@ -249,11 +262,11 @@ class DefaultAnimationPreprocessor: BasePreprocessor {
         defaultAnimation = modalAnim
       }
     }
-
+    
     if case .selectBy(let presentAnim, let dismissAnim) = defaultAnimation {
       defaultAnimation = presenting ? presentAnim : dismissAnim
     }
-
+    
     if case .auto = defaultAnimation {
       if animators!.contains(where: { $0.canAnimate(view: toView, appearing: true) || $0.canAnimate(view: fromView, appearing: false) }) {
         defaultAnimation = .none
@@ -265,14 +278,14 @@ class DefaultAnimationPreprocessor: BasePreprocessor {
         defaultAnimation = .fade
       }
     }
-
+    
     if case .none = defaultAnimation {
       return
     }
-
+    
     context[fromView] = [.timingFunction(.standard), .duration(0.35)]
     context[toView] = [.timingFunction(.standard), .duration(0.35)]
-
+    
     let shadowState: [HeroModifier] = [.shadowOpacity(0.5),
                                        .shadowColor(.black),
                                        .shadowRadius(5),
@@ -333,7 +346,7 @@ class DefaultAnimationPreprocessor: BasePreprocessor {
       if !(fromOverFullScreen && !presenting) {
         context[toView] = [.fade]
       }
-
+      
       #if os(tvOS)
         context[fromView] = [.fade]
       #else
@@ -341,16 +354,22 @@ class DefaultAnimationPreprocessor: BasePreprocessor {
           context[fromView] = [.fade]
         }
       #endif
-
+      
       context[toView]!.append(.durationMatchLongest)
       context[fromView]!.append(.durationMatchLongest)
     case .zoom:
       hero.insertToViewFirst = true
-      context[fromView]!.append(contentsOf: [.scale(1.3), .fade])
-      context[toView]!.append(contentsOf: [.scale(0.7)])
+      context[toView]!.append(contentsOf: [.scale(1.3), .fade])
+      context[fromView]!.append(contentsOf: [.scale(0.7)])
     case .zoomOut:
       context[toView]!.append(contentsOf: [.scale(1.3), .fade])
       context[fromView]!.append(contentsOf: [.scale(0.7)])
+    case .fadeInSlide(let direction):
+      context[fromView]!.append(contentsOf: [ .duration(0.2)])
+      context[toView]!.append(contentsOf: [.translate(shift(direction: direction, appearing: true,size: CGSize(width: 30, height: 30))),
+                                           .fade,
+                                           .duration(0.2),
+                                           .timingFunction(.deceleration)])
     default:
       fatalError("Not implemented")
     }
